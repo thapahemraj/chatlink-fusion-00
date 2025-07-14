@@ -4,6 +4,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import Header from '@/components/Header';
 import AuthForm from '@/components/AuthForm';
+import { VisitorCounter } from '@/components/VisitorCounter';
 
 const Home = () => {
   const { isAuthenticated } = useAuth();
@@ -37,6 +38,10 @@ const Home = () => {
         
         <div className="mt-12 text-center text-sm text-muted-foreground animate-fade-in delay-200">
           <p>By continuing, you agree to our Terms and Privacy Policy.</p>
+        </div>
+        
+        <div className="mt-8 flex justify-center animate-fade-in delay-300">
+          <VisitorCounter />
         </div>
       </main>
     </div>
