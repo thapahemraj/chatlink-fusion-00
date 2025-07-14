@@ -5,6 +5,7 @@ import Logo from './Logo';
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 interface HeaderProps {
   className?: string;
@@ -22,17 +23,20 @@ const Header = ({ className, showLogout = false, onLogout }: HeaderProps) => {
         <Logo />
       </Link>
       
-      {showLogout && onLogout && (
-        <Button 
-          variant="ghost" 
-          size="sm" 
-          className="text-muted-foreground" 
-          onClick={onLogout}
-        >
-          <LogOut size={16} className="mr-2" />
-          <span>Log out</span>
-        </Button>
-      )}
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
+        {showLogout && onLogout && (
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="text-muted-foreground" 
+            onClick={onLogout}
+          >
+            <LogOut size={16} className="mr-2" />
+            <span>Log out</span>
+          </Button>
+        )}
+      </div>
     </header>
   );
 };

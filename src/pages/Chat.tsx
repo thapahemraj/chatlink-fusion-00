@@ -8,6 +8,7 @@ import VideoContainer from '@/components/VideoContainer';
 import VideoControls from '@/components/VideoControls';
 import ChatBox, { Message } from '@/components/ChatBox';
 import ConnectingOverlay from '@/components/ConnectingOverlay';
+import ConnectionStatus from '@/components/ConnectionStatus';
 import webRTCService from '@/services/webrtc';
 
 const Chat = () => {
@@ -29,6 +30,12 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
+  const [connectionInfo, setConnectionInfo] = useState<Array<{
+    peerId: string;
+    connectionState: RTCPeerConnectionState;
+    localIP?: string;
+    remoteIP?: string;
+  }>>([]);
   
   useEffect(() => {
     const init = async () => {
@@ -75,10 +82,25 @@ const Chat = () => {
     const unsubscribeConnectionState = webRTCService.onConnectionStateChange((peerId, state) => {
       console.log(`Connection state with ${peerId}: ${state}`);
       
+      // Update connection info
+      setConnectionInfo(prev => {
+        const existing = prev.find(conn => conn.peerId === peerId);
+        if (existing) {
+          return prev.map(conn => 
+            conn.peerId === peerId 
+              ? { ...conn, connectionState: state }
+              : conn
+          );
+        } else {
+          return [...prev, { peerId, connectionState: state }];
+        }
+      });
+      
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         setRemoteStream(null);
         setCurrentPeerId(null);
         setMessages([]);
+        setConnectionInfo(prev => prev.filter(conn => conn.peerId !== peerId));
         
         toast({
           title: "Disconnected",
@@ -219,18 +241,25 @@ const Chat = () => {
             />
           </div>
           
-          <div 
-            className={`
-              glass-panel rounded-xl overflow-hidden w-full md:w-80 transition-all duration-300 ease-in-out
-              ${isChatOpen ? 'h-96 md:h-auto opacity-100' : 'h-0 md:h-auto md:opacity-100 opacity-0 overflow-hidden'}
-            `}
-          >
-            {isChatOpen || window.innerWidth >= 768 ? (
-              <ChatBox 
-                messages={messages}
-                onSendMessage={handleSendMessage}
-              />
-            ) : null}
+          <div className="w-full md:w-80 space-y-4">
+            <ConnectionStatus 
+              connections={connectionInfo}
+              isConnecting={connecting}
+            />
+            
+            <div 
+              className={`
+                glass-panel rounded-xl overflow-hidden transition-all duration-300 ease-in-out
+                ${isChatOpen ? 'h-96 md:h-auto opacity-100' : 'h-0 md:h-auto md:opacity-100 opacity-0 overflow-hidden'}
+              `}
+            >
+              {isChatOpen || window.innerWidth >= 768 ? (
+                <ChatBox 
+                  messages={messages}
+                  onSendMessage={handleSendMessage}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
       </main>

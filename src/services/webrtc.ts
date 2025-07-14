@@ -1,10 +1,12 @@
-// This is a simplified WebRTC service for demo purposes
+// Enhanced WebRTC service with real IP-based connections
+import { signalingService, SignalingMessage } from './signaling';
 
 export interface PeerConnection {
   pc: RTCPeerConnection;
   dc: RTCDataChannel | null;
   remoteStream: MediaStream | null;
   polite: boolean;
+  isConnected: boolean;
 }
 
 class WebRTCService {
@@ -14,8 +16,11 @@ class WebRTCService {
   private onStreamCallbacks: Array<(peerId: string, stream: MediaStream) => void> = [];
   private onConnectionStateChangeCallbacks: Array<(peerId: string, state: RTCPeerConnectionState) => void> = [];
 
+  private currentRoomId: string | null = null;
+  private peerId: string = `peer-${Math.random().toString(36).substr(2, 9)}`;
+
   constructor() {
-    this.simulateServer();
+    this.setupSignaling();
   }
 
   // Get user media (camera and microphone)
@@ -34,58 +39,147 @@ class WebRTCService {
     }
   }
 
-  // For demo, we'll simulate connection establishment
-  simulateServer() {
-    console.log('Setting up WebRTC simulation for demo');
+  // Setup real signaling for peer discovery
+  private setupSignaling() {
+    signalingService.onMessage('offer', this.handleOffer.bind(this));
+    signalingService.onMessage('answer', this.handleAnswer.bind(this));
+    signalingService.onMessage('ice-candidate', this.handleIceCandidate.bind(this));
+    signalingService.onMessage('peer-joined', this.handlePeerJoined.bind(this));
+    signalingService.onMessage('peer-left', this.handlePeerLeft.bind(this));
   }
 
-  // Connect to a random user (simulated for demo)
+  private async handleOffer(message: SignalingMessage) {
+    const { offer, peerId } = message.data;
+    if (!peerId || peerId === this.peerId) return;
+
+    const peerConnection = this.getOrCreatePeerConnection(peerId);
+    
+    try {
+      await peerConnection.pc.setRemoteDescription(offer);
+      const answer = await peerConnection.pc.createAnswer();
+      await peerConnection.pc.setLocalDescription(answer);
+      
+      signalingService.sendMessage({
+        type: 'answer',
+        data: { answer, peerId: this.peerId },
+        targetPeerId: peerId
+      });
+    } catch (error) {
+      console.error('Error handling offer:', error);
+    }
+  }
+
+  private async handleAnswer(message: SignalingMessage) {
+    const { answer, peerId } = message.data;
+    if (!peerId || peerId === this.peerId) return;
+
+    const peerConnection = this.connections.get(peerId);
+    if (peerConnection) {
+      try {
+        await peerConnection.pc.setRemoteDescription(answer);
+      } catch (error) {
+        console.error('Error handling answer:', error);
+      }
+    }
+  }
+
+  private async handleIceCandidate(message: SignalingMessage) {
+    const { candidate, peerId } = message.data;
+    if (!peerId || peerId === this.peerId) return;
+
+    const peerConnection = this.connections.get(peerId);
+    if (peerConnection && candidate) {
+      try {
+        await peerConnection.pc.addIceCandidate(candidate);
+      } catch (error) {
+        console.error('Error adding ICE candidate:', error);
+      }
+    }
+  }
+
+  private handlePeerJoined(message: SignalingMessage) {
+    const { peerId } = message.data;
+    if (peerId && peerId !== this.peerId) {
+      console.log(`Peer joined: ${peerId}`);
+      this.createOffer(peerId);
+    }
+  }
+
+  private handlePeerLeft(message: SignalingMessage) {
+    const { peerId } = message.data;
+    if (peerId && peerId !== this.peerId) {
+      console.log(`Peer left: ${peerId}`);
+      this.disconnectFromPeer(peerId);
+    }
+  }
+
+  private async createOffer(peerId: string) {
+    const peerConnection = this.getOrCreatePeerConnection(peerId);
+    
+    try {
+      const offer = await peerConnection.pc.createOffer();
+      await peerConnection.pc.setLocalDescription(offer);
+      
+      signalingService.sendMessage({
+        type: 'offer',
+        data: { offer, peerId: this.peerId },
+        targetPeerId: peerId
+      });
+    } catch (error) {
+      console.error('Error creating offer:', error);
+    }
+  }
+
+  // Connect to a random user using real WebRTC
   async connectToRandomUser(): Promise<string> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       console.log('Looking for a random user to connect to...');
       
-      // Simulate finding a peer
-      setTimeout(() => {
-        const peerId = `peer-${Math.floor(Math.random() * 10000)}`;
-        this.setupPeerConnection(peerId);
-        
-        // Simulate receiving remote stream after a delay
-        setTimeout(() => {
-          if (!this.localStream) return;
-          
-          // Create a new MediaStream for the remote peer (simulated)
-          const fakeRemoteStream = new MediaStream();
-          
-          // Clone tracks from local stream for simulation purposes
-          this.localStream.getTracks().forEach(track => {
-            fakeRemoteStream.addTrack(track.clone());
-          });
-          
-          const peerConnection = this.connections.get(peerId);
-          if (peerConnection) {
-            peerConnection.remoteStream = fakeRemoteStream;
-            
-            // Notify about the new stream
-            this.onStreamCallbacks.forEach(callback => {
-              callback(peerId, fakeRemoteStream);
-            });
-            
-            // Simulate connection established
-            this.onConnectionStateChangeCallbacks.forEach(callback => {
-              callback(peerId, 'connected');
-            });
-          }
-        }, 2000);
-        
-        resolve(peerId);
-      }, 3000);
+      // Generate a random room ID for matching
+      const roomId = `room-${Math.floor(Math.random() * 10000)}`;
+      this.currentRoomId = roomId;
+      
+      // Join the room through signaling server
+      signalingService.joinRoom(roomId, this.peerId);
+      
+      // Set a timeout for connection attempt
+      const timeout = setTimeout(() => {
+        reject(new Error('Failed to find a peer within timeout'));
+      }, 30000); // 30 seconds timeout
+      
+      // Listen for successful connections
+      const unsubscribe = this.onConnectionStateChange((peerId, state) => {
+        if (state === 'connected') {
+          clearTimeout(timeout);
+          unsubscribe();
+          resolve(peerId);
+        }
+      });
     });
   }
 
-  // Set up a peer connection
-  private setupPeerConnection(peerId: string) {
+  // Get or create a peer connection
+  private getOrCreatePeerConnection(peerId: string): PeerConnection {
+    let peerConnection = this.connections.get(peerId);
+    if (peerConnection) {
+      return peerConnection;
+    }
+    
+    return this.setupPeerConnection(peerId);
+  }
+
+  // Set up a peer connection with enhanced ICE servers
+  private setupPeerConnection(peerId: string): PeerConnection {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun3.l.google.com:19302' },
+        // Add more STUN servers for better connectivity
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun.nextcloud.com:443' },
+      ]
     });
     
     // Create data channel
@@ -108,17 +202,26 @@ class WebRTCService {
       });
     }
     
-    // Handle ICE candidates (simplified)
+    // Handle ICE candidates with real signaling
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         console.log('New ICE candidate:', event.candidate);
-        // In a real app, we would send this to the peer via signaling server
+        signalingService.sendMessage({
+          type: 'ice-candidate',
+          data: { candidate: event.candidate, peerId: this.peerId },
+          targetPeerId: peerId
+        });
       }
     };
     
     // Handle connection state changes
     pc.onconnectionstatechange = () => {
       console.log(`Connection state changed: ${pc.connectionState}`);
+      const peerConnection = this.connections.get(peerId);
+      if (peerConnection) {
+        peerConnection.isConnected = pc.connectionState === 'connected';
+      }
+      
       this.onConnectionStateChangeCallbacks.forEach(callback => {
         callback(peerId, pc.connectionState);
       });
@@ -139,14 +242,17 @@ class WebRTCService {
       }
     };
     
-    this.connections.set(peerId, {
+    const connection: PeerConnection = {
       pc,
       dc,
       remoteStream: null,
-      polite: true
-    });
+      polite: true,
+      isConnected: false
+    };
     
-    return { pc, dc };
+    this.connections.set(peerId, connection);
+    
+    return connection;
   }
 
   // Disconnect from a peer
