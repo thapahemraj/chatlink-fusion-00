@@ -43,25 +43,28 @@ class SignalingService {
 
   private connectWebSocket() {
     try {
-      // Using a free WebSocket service for signaling
-      this.ws = new WebSocket('wss://echo.websocket.org');
+      // Using a more reliable WebSocket service for signaling
+      this.ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
       
       this.ws.onopen = () => {
         console.log('Connected to signaling server');
         this.reconnectAttempts = 0;
-        // Register user
-        this.sendWebSocketMessage({
-          type: 'user-register',
-          data: { userInfo: this.currentUser }
-        });
+        // Register user with IP filtering
+        if (this.currentUser) {
+          this.broadcastUserAvailable();
+        }
       };
 
       this.ws.onmessage = (event) => {
         try {
-          const message: SignalingMessage = JSON.parse(event.data);
-          this.handleWebSocketMessage(message);
+          const message = JSON.parse(event.data);
+          // Only process messages that are for our signaling protocol
+          if (message.type && message.userInfo) {
+            this.handleWebSocketMessage(message);
+          }
         } catch (error) {
-          console.error('Error parsing WebSocket message:', error);
+          // Ignore non-JSON messages from the WebSocket service
+          console.log('Received non-signaling message, ignoring');
         }
       };
 
@@ -77,6 +80,19 @@ class SignalingService {
       console.error('Failed to connect WebSocket:', error);
       this.attemptReconnect();
     }
+  }
+
+  private broadcastUserAvailable() {
+    if (!this.currentUser) return;
+    
+    const message = {
+      type: 'user-available',
+      userInfo: this.currentUser,
+      timestamp: Date.now()
+    };
+    
+    this.sendWebSocketMessage(message);
+    console.log('Broadcasting user availability:', this.currentUser);
   }
 
   private attemptReconnect() {
@@ -95,11 +111,83 @@ class SignalingService {
     }
   }
 
-  private handleWebSocketMessage(message: SignalingMessage) {
+  private handleWebSocketMessage(message: any) {
     console.log('Received WebSocket message:', message);
-    const handler = this.messageHandlers.get(message.type);
+    
+    // Handle different message types
+    switch (message.type) {
+      case 'user-available':
+        this.handleUserAvailable(message.userInfo);
+        break;
+      case 'connection-request':
+        this.handleConnectionRequest(message);
+        break;
+      case 'connection-response':
+        this.handleConnectionResponse(message);
+        break;
+      default:
+        const handler = this.messageHandlers.get(message.type);
+        if (handler) {
+          handler(message);
+        }
+    }
+  }
+
+  private handleUserAvailable(userInfo: UserInfo) {
+    // Don't connect to ourselves or same IP
+    if (!this.currentUser || 
+        userInfo.peerId === this.currentUser.peerId || 
+        userInfo.ip === this.currentUser.ip) {
+      return;
+    }
+
+    console.log('Found available user:', userInfo);
+    
+    // Send connection request
+    this.sendWebSocketMessage({
+      type: 'connection-request',
+      userInfo: this.currentUser,
+      targetUser: userInfo,
+      timestamp: Date.now()
+    });
+  }
+
+  private handleConnectionRequest(message: any) {
+    if (!this.currentUser || message.targetUser.peerId !== this.currentUser.peerId) {
+      return;
+    }
+
+    console.log('Received connection request from:', message.userInfo);
+    
+    // Accept the connection
+    this.sendWebSocketMessage({
+      type: 'connection-response',
+      userInfo: this.currentUser,
+      targetUser: message.userInfo,
+      accepted: true,
+      timestamp: Date.now()
+    });
+
+    // Notify partner found
+    const handler = this.messageHandlers.get('partner-found');
     if (handler) {
-      handler(message);
+      handler({ type: 'partner-found', data: message.userInfo });
+    }
+  }
+
+  private handleConnectionResponse(message: any) {
+    if (!this.currentUser || message.targetUser.peerId !== this.currentUser.peerId) {
+      return;
+    }
+
+    if (message.accepted) {
+      console.log('Connection accepted by:', message.userInfo);
+      
+      // Notify partner found
+      const handler = this.messageHandlers.get('partner-found');
+      if (handler) {
+        handler({ type: 'partner-found', data: message.userInfo });
+      }
     }
   }
 
@@ -154,19 +242,20 @@ class SignalingService {
   async findPartner(): Promise<UserInfo | null> {
     if (!this.currentUser) return null;
     
-    // Update peer discovery service with current user
-    peerDiscoveryService.setCurrentUser(this.currentUser);
-    
-    // Use peer discovery service to find partners
-    const partner = await peerDiscoveryService.findPartner();
-    
-    if (partner) {
-      console.log('Partner found:', partner);
-      return partner;
-    } else {
-      console.log('No partner found');
-      return null;
-    }
+    return new Promise((resolve) => {
+      // Set up partner found handler
+      this.onMessage('partner-found', (message) => {
+        resolve(message.data);
+      });
+
+      // Broadcast availability to find partners
+      this.broadcastUserAvailable();
+      
+      // Timeout after 10 seconds
+      setTimeout(() => {
+        resolve(null);
+      }, 10000);
+    });
   }
 
   getCurrentUser(): UserInfo | null {
