@@ -9,6 +9,7 @@ import VideoControls from '@/components/VideoControls';
 import ChatBox, { Message } from '@/components/ChatBox';
 import ConnectingOverlay from '@/components/ConnectingOverlay';
 import ConnectionStatus from '@/components/ConnectionStatus';
+import { PartnerInfo } from '@/components/PartnerInfo';
 import webRTCService from '@/services/webrtc';
 
 const Chat = () => {
@@ -36,6 +37,8 @@ const Chat = () => {
     localIP?: string;
     remoteIP?: string;
   }>>([]);
+  const [partnerInfo, setPartnerInfo] = useState<any>(null);
+  const [showPartnerInfo, setShowPartnerInfo] = useState(false);
   
   useEffect(() => {
     const init = async () => {
@@ -127,16 +130,26 @@ const Chat = () => {
     setMessages([]);
     setConnecting(true);
     setConnectionStatus('Looking for a partner...');
+    setPartnerInfo(null);
+    setShowPartnerInfo(false);
     
     try {
       const peerId = await webRTCService.connectToRandomUser();
-      setCurrentPeerId(peerId);
-      setConnectionStatus('Establishing connection...');
       
-      const stream = webRTCService.getRemoteStream(peerId);
-      if (stream) {
-        setRemoteStream(stream);
+      if (peerId) {
+        setCurrentPeerId(peerId);
+        setConnectionStatus('Establishing connection...');
+        
+        const stream = webRTCService.getRemoteStream(peerId);
+        if (stream) {
+          setRemoteStream(stream);
+          setConnecting(false);
+        }
+      } else {
+        setConnectionStatus('Partner not available, please try later.');
         setConnecting(false);
+        // Retry after 5 seconds
+        setTimeout(findNewPeer, 5000);
       }
     } catch (error) {
       console.error('Error connecting to peer:', error);
@@ -238,6 +251,11 @@ const Chat = () => {
             <ConnectingOverlay 
               isVisible={connecting} 
               status={connectionStatus} 
+            />
+            
+            <PartnerInfo 
+              partnerInfo={partnerInfo}
+              isVisible={showPartnerInfo && !connecting}
             />
           </div>
           

@@ -131,31 +131,31 @@ class WebRTCService {
   }
 
   // Connect to a random user using real WebRTC
-  async connectToRandomUser(): Promise<string> {
-    return new Promise((resolve, reject) => {
-      console.log('Looking for a random user to connect to...');
+  async connectToRandomUser(): Promise<string | null> {
+    try {
+      const partner = await signalingService.findPartner();
       
-      // Generate a random room ID for matching
-      const roomId = `room-${Math.floor(Math.random() * 10000)}`;
-      this.currentRoomId = roomId;
-      
-      // Join the room through signaling server
-      signalingService.joinRoom(roomId, this.peerId);
-      
-      // Set a timeout for connection attempt
-      const timeout = setTimeout(() => {
-        reject(new Error('Failed to find a peer within timeout'));
-      }, 30000); // 30 seconds timeout
-      
-      // Listen for successful connections
-      const unsubscribe = this.onConnectionStateChange((peerId, state) => {
-        if (state === 'connected') {
-          clearTimeout(timeout);
-          unsubscribe();
-          resolve(peerId);
-        }
-      });
-    });
+      if (partner) {
+        // Simulate peer joining
+        setTimeout(() => {
+          this.emit('peer-joined', partner.peerId, { peerId: partner.peerId, userInfo: partner });
+        }, 500);
+        
+        return partner.peerId;
+      } else {
+        return null;
+      }
+    } catch (error) {
+      console.error('Failed to connect to random user:', error);
+      return null;
+    }
+  }
+
+  // Helper method to emit events
+  private emit(eventType: string, peerId: string, data: any) {
+    if (eventType === 'peer-joined') {
+      this.handlePeerJoined({ type: 'peer-joined', data });
+    }
   }
 
   // Get or create a peer connection
