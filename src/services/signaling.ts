@@ -1,4 +1,6 @@
 // Enhanced signaling service for real peer-to-peer connections
+import { peerDiscoveryService } from './peerDiscovery';
+
 export interface UserInfo {
   peerId: string;
   ip: string;
@@ -19,9 +21,10 @@ export interface SignalingMessage {
 
 class SignalingService {
   private messageHandlers: Map<string, (message: SignalingMessage) => void> = new Map();
-  private connectedUsers: Map<string, UserInfo> = new Map();
-  private waitingUsers: UserInfo[] = [];
+  private ws: WebSocket | null = null;
   private currentUser: UserInfo | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
 
   constructor() {
     this.initializeUserInfo();
@@ -31,9 +34,72 @@ class SignalingService {
     try {
       const userInfo = await this.getUserInfo();
       this.currentUser = userInfo;
-      console.log('Connected to signaling server', userInfo);
+      this.connectWebSocket();
+      console.log('Initializing signaling with user info:', userInfo);
     } catch (error) {
       console.error('Failed to get user info:', error);
+    }
+  }
+
+  private connectWebSocket() {
+    try {
+      // Using a free WebSocket service for signaling
+      this.ws = new WebSocket('wss://echo.websocket.org');
+      
+      this.ws.onopen = () => {
+        console.log('Connected to signaling server');
+        this.reconnectAttempts = 0;
+        // Register user
+        this.sendWebSocketMessage({
+          type: 'user-register',
+          data: { userInfo: this.currentUser }
+        });
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const message: SignalingMessage = JSON.parse(event.data);
+          this.handleWebSocketMessage(message);
+        } catch (error) {
+          console.error('Error parsing WebSocket message:', error);
+        }
+      };
+
+      this.ws.onclose = () => {
+        console.log('WebSocket connection closed');
+        this.attemptReconnect();
+      };
+
+      this.ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+    } catch (error) {
+      console.error('Failed to connect WebSocket:', error);
+      this.attemptReconnect();
+    }
+  }
+
+  private attemptReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      setTimeout(() => {
+        this.connectWebSocket();
+      }, 2000 * this.reconnectAttempts);
+    }
+  }
+
+  private sendWebSocketMessage(message: any) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  private handleWebSocketMessage(message: SignalingMessage) {
+    console.log('Received WebSocket message:', message);
+    const handler = this.messageHandlers.get(message.type);
+    if (handler) {
+      handler(message);
     }
   }
 
@@ -68,94 +134,39 @@ class SignalingService {
     return Math.random().toString(36).substr(2, 9);
   }
 
-  private simulateMessage(message: SignalingMessage) {
-    // Simulate server behavior locally
-    setTimeout(() => {
-      const handler = this.messageHandlers.get(message.type);
-      if (handler) {
-        handler(message);
-      }
-    }, 100);
-  }
-
   sendMessage(message: SignalingMessage) {
-    // For now, simulate server behavior locally since we don't have a real signaling server
     console.log('Sending message:', message);
     
-    if (message.type === 'find-partner') {
-      this.handleFindPartner();
-    } else {
-      this.simulateMessage(message);
-    }
-  }
-
-  private handleFindPartner() {
-    if (!this.currentUser) return;
-
-    // Check for duplicate IP (simple duplicate prevention)
-    const existingUser = this.waitingUsers.find(user => user.ip === this.currentUser?.ip);
-    if (existingUser) {
-      this.simulateMessage({
-        type: 'no-partner',
-        data: { reason: 'duplicate_ip' }
-      });
-      return;
-    }
-
-    // Check if there are other waiting users
-    if (this.waitingUsers.length > 0) {
-      const partner = this.waitingUsers.shift()!;
-      
-      // Remove current user from waiting list if they were there
-      this.waitingUsers = this.waitingUsers.filter(user => user.peerId !== this.currentUser?.peerId);
-      
-      // Connect users
-      this.simulateMessage({
-        type: 'partner-found',
-        data: { partner },
-        userInfo: this.currentUser
-      });
-    } else {
-      // Add to waiting list
-      this.waitingUsers.push(this.currentUser);
-      
-      // Simulate no partner found after a delay
-      setTimeout(() => {
-        this.simulateMessage({
-          type: 'no-partner',
-          data: { reason: 'no_users_available' }
-        });
-      }, 3000);
-    }
+    // Add user info and timestamp to all messages
+    const messageWithInfo = {
+      ...message,
+      userInfo: this.currentUser || undefined,
+      timestamp: Date.now()
+    };
+    
+    this.sendWebSocketMessage(messageWithInfo);
   }
 
   onMessage(type: string, handler: (message: SignalingMessage) => void) {
     this.messageHandlers.set(type, handler);
   }
 
-  findPartner(): Promise<UserInfo | null> {
-    return new Promise((resolve) => {
-      const handlePartnerFound = (message: SignalingMessage) => {
-        this.messageHandlers.delete('partner-found');
-        this.messageHandlers.delete('no-partner');
-        resolve(message.data.partner);
-      };
-
-      const handleNoPartner = (message: SignalingMessage) => {
-        this.messageHandlers.delete('partner-found');
-        this.messageHandlers.delete('no-partner');
-        resolve(null);
-      };
-
-      this.onMessage('partner-found', handlePartnerFound);
-      this.onMessage('no-partner', handleNoPartner);
-
-      this.sendMessage({
-        type: 'find-partner',
-        data: {},
-        userInfo: this.currentUser || undefined
-      });
-    });
+  async findPartner(): Promise<UserInfo | null> {
+    if (!this.currentUser) return null;
+    
+    // Update peer discovery service with current user
+    peerDiscoveryService.setCurrentUser(this.currentUser);
+    
+    // Use peer discovery service to find partners
+    const partner = await peerDiscoveryService.findPartner();
+    
+    if (partner) {
+      console.log('Partner found:', partner);
+      return partner;
+    } else {
+      console.log('No partner found');
+      return null;
+    }
   }
 
   getCurrentUser(): UserInfo | null {
@@ -170,10 +181,17 @@ class SignalingService {
   }
 
   disconnect() {
-    if (this.currentUser) {
-      // Remove from waiting list
-      this.waitingUsers = this.waitingUsers.filter(user => user.peerId !== this.currentUser?.peerId);
+    if (this.ws) {
+      this.sendWebSocketMessage({
+        type: 'user-disconnect',
+        data: { peerId: this.currentUser?.peerId }
+      });
+      this.ws.close();
+      this.ws = null;
     }
+    
+    // Also disconnect from peer discovery
+    peerDiscoveryService.disconnect();
   }
 }
 
