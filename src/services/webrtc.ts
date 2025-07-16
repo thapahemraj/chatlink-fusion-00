@@ -1,5 +1,5 @@
 // Enhanced WebRTC service with real IP-based connections
-import { signalingService, SignalingMessage } from './signaling';
+import { realTimeSignalingService, RTCSignalingMessage } from './realTimeSignaling';
 
 export interface PeerConnection {
   pc: RTCPeerConnection;
@@ -41,39 +41,35 @@ class WebRTCService {
 
   // Setup real signaling for peer discovery
   private setupSignaling() {
-    signalingService.onMessage('offer', this.handleOffer.bind(this));
-    signalingService.onMessage('answer', this.handleAnswer.bind(this));
-    signalingService.onMessage('ice-candidate', this.handleIceCandidate.bind(this));
-    signalingService.onMessage('peer-joined', this.handlePeerJoined.bind(this));
-    signalingService.onMessage('peer-left', this.handlePeerLeft.bind(this));
+    realTimeSignalingService.onMessage('offer', this.handleOffer.bind(this));
+    realTimeSignalingService.onMessage('answer', this.handleAnswer.bind(this));
+    realTimeSignalingService.onMessage('ice-candidate', this.handleIceCandidate.bind(this));
+    realTimeSignalingService.onMessage('connection-request', this.handleConnectionRequest.bind(this));
+    realTimeSignalingService.onMessage('user-available', this.handleUserAvailable.bind(this));
   }
 
-  private async handleOffer(message: SignalingMessage) {
-    const { offer, peerId } = message.data;
-    if (!peerId || peerId === this.peerId) return;
+  private async handleOffer(message: RTCSignalingMessage) {
+    const { offer } = message.data;
+    if (!message.from || message.from === this.peerId) return;
 
-    const peerConnection = this.getOrCreatePeerConnection(peerId);
+    const peerConnection = this.getOrCreatePeerConnection(message.from);
     
     try {
       await peerConnection.pc.setRemoteDescription(offer);
       const answer = await peerConnection.pc.createAnswer();
       await peerConnection.pc.setLocalDescription(answer);
       
-      signalingService.sendMessage({
-        type: 'answer',
-        data: { answer, peerId: this.peerId },
-        targetPeerId: peerId
-      });
+      realTimeSignalingService.sendAnswer(message.from, answer);
     } catch (error) {
       console.error('Error handling offer:', error);
     }
   }
 
-  private async handleAnswer(message: SignalingMessage) {
-    const { answer, peerId } = message.data;
-    if (!peerId || peerId === this.peerId) return;
+  private async handleAnswer(message: RTCSignalingMessage) {
+    const { answer } = message.data;
+    if (!message.from || message.from === this.peerId) return;
 
-    const peerConnection = this.connections.get(peerId);
+    const peerConnection = this.connections.get(message.from);
     if (peerConnection) {
       try {
         await peerConnection.pc.setRemoteDescription(answer);
@@ -83,11 +79,11 @@ class WebRTCService {
     }
   }
 
-  private async handleIceCandidate(message: SignalingMessage) {
-    const { candidate, peerId } = message.data;
-    if (!peerId || peerId === this.peerId) return;
+  private async handleIceCandidate(message: RTCSignalingMessage) {
+    const { candidate } = message.data;
+    if (!message.from || message.from === this.peerId) return;
 
-    const peerConnection = this.connections.get(peerId);
+    const peerConnection = this.connections.get(message.from);
     if (peerConnection && candidate) {
       try {
         await peerConnection.pc.addIceCandidate(candidate);
@@ -97,20 +93,23 @@ class WebRTCService {
     }
   }
 
-  private handlePeerJoined(message: SignalingMessage) {
-    const { peerId } = message.data;
-    if (peerId && peerId !== this.peerId) {
-      console.log(`Peer joined: ${peerId}`);
-      this.createOffer(peerId);
-    }
+  private handleConnectionRequest(message: RTCSignalingMessage) {
+    if (!message.from || message.from === this.peerId) return;
+    
+    console.log(`Connection request from: ${message.from}`);
+    
+    // Accept the connection and start WebRTC
+    realTimeSignalingService.sendConnectionResponse(message.from, true);
+    this.createOffer(message.from);
   }
 
-  private handlePeerLeft(message: SignalingMessage) {
-    const { peerId } = message.data;
-    if (peerId && peerId !== this.peerId) {
-      console.log(`Peer left: ${peerId}`);
-      this.disconnectFromPeer(peerId);
-    }
+  private handleUserAvailable(message: RTCSignalingMessage) {
+    if (!message.from || message.from === this.peerId) return;
+    
+    console.log(`User available: ${message.from}`);
+    
+    // Send connection request to available user
+    realTimeSignalingService.sendConnectionRequest(message.from);
   }
 
   private async createOffer(peerId: string) {
@@ -120,11 +119,7 @@ class WebRTCService {
       const offer = await peerConnection.pc.createOffer();
       await peerConnection.pc.setLocalDescription(offer);
       
-      signalingService.sendMessage({
-        type: 'offer',
-        data: { offer, peerId: this.peerId },
-        targetPeerId: peerId
-      });
+      realTimeSignalingService.sendOffer(peerId, offer);
     } catch (error) {
       console.error('Error creating offer:', error);
     }
@@ -133,14 +128,11 @@ class WebRTCService {
   // Connect to a random user using real WebRTC
   async connectToRandomUser(): Promise<string | null> {
     try {
-      const partner = await signalingService.findPartner();
+      const partner = await realTimeSignalingService.findPartner();
       
       if (partner) {
-        // Simulate peer joining
-        setTimeout(() => {
-          this.emit('peer-joined', partner.peerId, { peerId: partner.peerId, userInfo: partner });
-        }, 500);
-        
+        // Start the connection process
+        this.createOffer(partner.peerId);
         return partner.peerId;
       } else {
         return null;
@@ -148,13 +140,6 @@ class WebRTCService {
     } catch (error) {
       console.error('Failed to connect to random user:', error);
       return null;
-    }
-  }
-
-  // Helper method to emit events
-  private emit(eventType: string, peerId: string, data: any) {
-    if (eventType === 'peer-joined') {
-      this.handlePeerJoined({ type: 'peer-joined', data });
     }
   }
 
@@ -168,7 +153,7 @@ class WebRTCService {
     return this.setupPeerConnection(peerId);
   }
 
-  // Set up a peer connection with enhanced ICE servers
+  // Set up a peer connection with enhanced ICE servers for cross-device connections
   private setupPeerConnection(peerId: string): PeerConnection {
     const pc = new RTCPeerConnection({
       iceServers: [
@@ -176,10 +161,21 @@ class WebRTCService {
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
-        // Add more STUN servers for better connectivity
         { urls: 'stun:stun.cloudflare.com:3478' },
         { urls: 'stun:stun.nextcloud.com:443' },
-      ]
+        // Add TURN servers for better NAT traversal
+        { 
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        { 
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ],
+      iceCandidatePoolSize: 10
     });
     
     // Create data channel
@@ -206,11 +202,7 @@ class WebRTCService {
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         console.log('New ICE candidate:', event.candidate);
-        signalingService.sendMessage({
-          type: 'ice-candidate',
-          data: { candidate: event.candidate, peerId: this.peerId },
-          targetPeerId: peerId
-        });
+        realTimeSignalingService.sendIceCandidate(peerId, event.candidate);
       }
     };
     

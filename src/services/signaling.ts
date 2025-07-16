@@ -43,8 +43,8 @@ class SignalingService {
 
   private connectWebSocket() {
     try {
-      // Using a more reliable WebSocket service for signaling
-      this.ws = new WebSocket('wss://socketsbay.com/wss/v2/1/demo/');
+      // Using a robust WebSocket service for signaling
+      this.ws = new WebSocket('wss://ws.postman-echo.com/raw');
       
       this.ws.onopen = () => {
         console.log('Connected to signaling server');
@@ -57,14 +57,20 @@ class SignalingService {
 
       this.ws.onmessage = (event) => {
         try {
-          const message = JSON.parse(event.data);
-          // Only process messages that are for our signaling protocol
-          if (message.type && message.userInfo) {
-            this.handleWebSocketMessage(message);
+          const data = event.data;
+          console.log('Raw WebSocket message:', data);
+          
+          // Handle different message types
+          if (typeof data === 'string') {
+            const message = JSON.parse(data);
+            
+            // Only process messages that are for our signaling protocol
+            if (message.type && message.signaling === 'videochat' && message.userInfo) {
+              this.handleWebSocketMessage(message);
+            }
           }
         } catch (error) {
-          // Ignore non-JSON messages from the WebSocket service
-          console.log('Received non-signaling message, ignoring');
+          console.log('Received non-signaling message, ignoring:', error);
         }
       };
 
@@ -107,7 +113,12 @@ class SignalingService {
 
   private sendWebSocketMessage(message: any) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+      const messageWithSignaling = {
+        ...message,
+        signaling: 'videochat',
+        timestamp: Date.now()
+      };
+      this.ws.send(JSON.stringify(messageWithSignaling));
     }
   }
 
