@@ -146,10 +146,10 @@ const Chat = () => {
           setConnecting(false);
         }
       } else {
-        setConnectionStatus('Partner not available, please try later.');
+        setConnectionStatus('Partner not available. Join after a few minutes.');
         setConnecting(false);
-        // Retry after 5 seconds
-        setTimeout(findNewPeer, 5000);
+        // Retry after 30 seconds
+        setTimeout(findNewPeer, 30000);
       }
     } catch (error) {
       console.error('Error connecting to peer:', error);
