@@ -21,10 +21,20 @@ export const UserInfo: React.FC<UserInfoProps> = ({ className }) => {
   const [userData, setUserData] = useState<UserData | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  
+  // Check if user is authenticated
+  const isAuthenticated = localStorage.getItem('chatlink-user');
 
   useEffect(() => {
     const fetchUserData = async () => {
       try {
+        // Check if user is authenticated
+        const authUser = localStorage.getItem('chatlink-user');
+        if (!authUser) {
+          setLoading(false);
+          return;
+        }
+
         const response = await fetch('https://ipapi.co/json/');
         const data = await response.json();
         
@@ -48,17 +58,21 @@ export const UserInfo: React.FC<UserInfoProps> = ({ className }) => {
         
       } catch (error) {
         console.error('Failed to fetch user data:', error);
-        const fallbackData: UserData = {
-          id: generateUserId(),
-          ip: 'Unable to detect',
-          country: 'Unknown',
-          city: 'Unknown',
-          region: 'Unknown',
-          timestamp: Date.now(),
-          userAgent: navigator.userAgent
-        };
-        setUserData(fallbackData);
-        localStorage.setItem('currentUser', JSON.stringify(fallbackData));
+        // Only create fallback if user is authenticated
+        const authUser = localStorage.getItem('chatlink-user');
+        if (authUser) {
+          const fallbackData: UserData = {
+            id: generateUserId(),
+            ip: 'Unable to detect',
+            country: 'Unknown',
+            city: 'Unknown',
+            region: 'Unknown',
+            timestamp: Date.now(),
+            userAgent: navigator.userAgent
+          };
+          setUserData(fallbackData);
+          localStorage.setItem('currentUser', JSON.stringify(fallbackData));
+        }
       } finally {
         setLoading(false);
       }
@@ -96,6 +110,11 @@ export const UserInfo: React.FC<UserInfoProps> = ({ className }) => {
     }
   };
 
+  // Don't render if user is not authenticated
+  if (!isAuthenticated) {
+    return null;
+  }
+
   if (loading) {
     return (
       <Card className={className}>
@@ -111,13 +130,7 @@ export const UserInfo: React.FC<UserInfoProps> = ({ className }) => {
   }
 
   if (!userData) {
-    return (
-      <Card className={className}>
-        <CardContent className="p-4">
-          <p className="text-muted-foreground text-sm">Unable to load user information</p>
-        </CardContent>
-      </Card>
-    );
+    return null;
   }
 
   const formatTime = (timestamp: number) => {
@@ -180,6 +193,10 @@ export const getCurrentUserData = (): UserData | null => {
 
 export const getOnlineUsersCount = (): number => {
   try {
+    // Only count authenticated users
+    const authUser = localStorage.getItem('chatlink-user');
+    if (!authUser) return 0;
+    
     const users = JSON.parse(localStorage.getItem('onlineUsers') || '[]');
     const currentUser = getCurrentUserData();
     const now = Date.now();

@@ -5,7 +5,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import Header from '@/components/Header';
 import AuthForm from '@/components/AuthForm';
 import { VisitorCounter } from '@/components/VisitorCounter';
-import { UserInfo } from '@/components/UserInfo';
 import { PartnerAvailability } from '@/components/PartnerAvailability';
 
 const Home = () => {
@@ -44,9 +43,7 @@ const Home = () => {
         
         <div className="mt-8 flex flex-col items-center gap-4 animate-fade-in delay-300">
           <VisitorCounter />
-          
-          <div className="w-full max-w-md space-y-4">
-            <UserInfo />
+          <div className="w-full max-w-md">
             <PartnerAvailability />
           </div>
         </div>

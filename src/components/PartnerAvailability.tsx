@@ -21,6 +21,13 @@ export const PartnerAvailability: React.FC<PartnerAvailabilityProps> = ({
 
   useEffect(() => {
     const updateCount = () => {
+      // Only check availability if user is authenticated
+      const authUser = localStorage.getItem('chatlink-user');
+      if (!authUser) {
+        setOnlineCount(0);
+        return;
+      }
+      
       setOnlineCount(getOnlineUsersCount());
     };
 
